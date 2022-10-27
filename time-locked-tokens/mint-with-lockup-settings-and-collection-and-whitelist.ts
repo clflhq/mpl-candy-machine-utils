@@ -6,6 +6,7 @@ import {
   SYSVAR_CLOCK_PUBKEY,
   SYSVAR_INSTRUCTIONS_PUBKEY,
   SYSVAR_RECENT_BLOCKHASHES_PUBKEY,
+  ComputeBudgetProgram,
   Transaction,
 } from "@solana/web3.js";
 import {
@@ -29,16 +30,15 @@ import { remainingAccountsForLockup } from "@cardinal/mpl-candy-machine-utils";
 import { utils } from "@project-serum/anchor";
 
 const walletKeypair = Keypair.fromSecretKey(
-  utils.bytes.bs58.decode(process.env.WALLET_KEYPAIR || "")
+  new Uint8Array([1, 2, 3, 4, 5]) // 自分のシークレットキーを入力
 );
-const candyMachineId = new PublicKey("");
+const candyMachineId = new PublicKey("EWgWphM4MVNewYHqvYE5pKFD6KqgXDoMbnbmbvWqQwjU");
 const collectionMintKeypair = Keypair.generate();
-const whitelistMintKeypair = Keypair.generate();
+const whitelistMint = new PublicKey("7jEt7ph4Zu4mGMZKJTsKv39NbhfBp6SP3cZYRFRWJ7vX"); // CMに設定しているwhitelist tokenに置き換え
 
-const connection = new Connection(
-  "https://api.mainnet-beta.solana.com",
-  "confirmed"
-);
+const receiver = new PublicKey("3HgNNY6aaFLTgviU6ZpRKoHF37Hj4r11sJeaExDVuQbA"); // NFTを受け取る人
+
+const connection = new Connection("https://devnet.genesysgo.net/", "confirmed");
 
 const mintNft = async () => {
   const nftToMintKeypair = Keypair.generate();
@@ -46,7 +46,7 @@ const mintNft = async () => {
     ASSOCIATED_TOKEN_PROGRAM_ID,
     TOKEN_PROGRAM_ID,
     nftToMintKeypair.publicKey,
-    walletKeypair.publicKey,
+    receiver, // 受け取るのはreceiver
     false
   );
 
@@ -55,7 +55,7 @@ const mintNft = async () => {
   const whitelistMintTokenAccount = await Token.getAssociatedTokenAddress(
     ASSOCIATED_TOKEN_PROGRAM_ID,
     TOKEN_PROGRAM_ID,
-    whitelistMintKeypair.publicKey,
+    whitelistMint,
     walletKeypair.publicKey,
     false
   );
@@ -64,10 +64,7 @@ const mintNft = async () => {
       [Buffer.from("candy_machine"), candyMachineId.toBuffer()],
       PROGRAM_ID
     );
-  const candyMachine = await CandyMachine.fromAccountAddress(
-    connection,
-    candyMachineId
-  );
+  const candyMachine = await CandyMachine.fromAccountAddress(connection, candyMachineId);
   const mintIx = createMintNftInstruction(
     {
       candyMachine: candyMachineId,
@@ -126,6 +123,7 @@ const mintNft = async () => {
   });
 
   const instructions = [
+    ComputeBudgetProgram.requestUnits({ units: 400_000, additionalFee: 0 }), // Program returned error: Computational budget exceededを防ぐためにcompute budgetを確保
     {
       ...mintIx,
       keys: [
@@ -137,7 +135,7 @@ const mintNft = async () => {
           isWritable: true,
         },
         {
-          pubkey: whitelistMintKeypair.publicKey,
+          pubkey: whitelistMint,
           isSigner: false,
           isWritable: true,
         },
@@ -153,14 +151,10 @@ const mintNft = async () => {
           isWritable: true,
         },
         // remaining accounts for locking
-        ...(await remainingAccountsForLockup(
-          candyMachineId,
-          nftToMintKeypair.publicKey,
-          tokenAccountToReceive
-        )),
+        ...(await remainingAccountsForLockup(candyMachineId, nftToMintKeypair.publicKey, tokenAccountToReceive)),
       ],
     },
-    setCollectionDuringMintIx,
+    // setCollectionDuringMintIx, // コレクションはセットしていない。
   ];
   const tx = new Transaction();
   tx.instructions = instructions;
